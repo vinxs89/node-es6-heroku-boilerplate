@@ -1,34 +1,78 @@
-require('dotenv').config();
-const express = require('express');
-const path = require('path');
-const http = require('http');
-const cors = require('cors');
-const morgan = require('morgan');
-const bodyParser = require('body-parser');
-const mongoUtil = require('./util/mongo');
+const req = require('request');
 
-const app = express();
-const apiEndpoint = require('./routes/api-endpoint');
+const getData = (endpoint) => {
+	return new Promise((resolve, reject) => {
+		const options = {
+			url: endpoint,
+			headers: {
+				'x-api-key': 'caminomasca',
+				'Accept': 'application/json'
+			}
+		}
+		req.get(options, (err, res) => {
+			console.debug('Received: ' + JSON.stringify(res));
+			resolve(res);
+		});
+	});
+};
 
-app.use(bodyParser.urlencoded({ extended: true }));
-app.use(bodyParser.json());
-app.use(cors());
-app.use(morgan('dev'));
-app.use(express.static(path.join(__dirname, 'dist')));
+const notify = (data) => {
+	const options = {
+		url: '',
+		body: data
+	}
+	req.post(options, (err, res) => {
+		console.log('Notified: ' + JSON.stringify(data));
+	});
+};
 
-mongoUtil.connectToServer(function(err) {
-	if (err) return console.log(err);
-});
+const start = async (endpoints) => {
+	const availableSeats = [];
 
-app.use('/api', apiEndpoint);
+	const promises = endpoints.map(endpoint => getData(endpoint));
+	const responses = await Promise.all(promises);
+	
+	responses.forEach(response => {
+		if (!response.availability) {
+			console.warn("No availability array");
+			return;
+		}
+		
+		response.availability.forEach(availability => {
+			if(!availability.sessions) {
+				console.warn("No sessions array");
+				return;
+			}
+			
+			availability.sessions.forEach(session => {
+				console.debug("Checking session for date " + availability.date + ": " + JSON.stringify(session));
+				
+				if(session.available && session.available > 0) {
+					availableSeats.push({
+						date: availability.date,
+						session
+					});
+				}
+			});
+		});
+	});
+	
+	if (availableSeats.length > 0 ) {
+		console.log('There are available seats :)');
+		availableSeats.forEach(console.log);
+		//notify({ seats: availableSeats});
+	} else {
+		console.log('No seats available :(');
+	}
+};
 
-app.get('*', (req, res) => {
-	res.sendFile(path.join(__dirname, 'index.html'));
-});
+const endpoints = [
+	'https://api.volcanoteide.com/products/1927/availability/2021-03',
+	'https://api.volcanoteide.com/products/1927/availability/2021-04'
+];
 
-const port = process.env.PORT || '1337';
-app.set('port', port);
-
-const server = http.createServer(app);
-
-server.listen(port, () => console.log(`API running on localhost:${port}`));
+try {
+	start(endpoints);
+} catch (e) {
+	console.error(e);
+}
